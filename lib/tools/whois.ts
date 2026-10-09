@@ -18,26 +18,33 @@ export class WhoisTool extends ToolFunction {
   readonly description = "RDAP/WHOIS registrant + registrar + email extraction.";
   readonly per_request_timeout_ms = 10_000;
 
-  private static RDAP_URL = "https://rdap.iana.org/domain/{target}";
+  // Tried in order; first valid RDAP JSON wins. rdap.iana.org's bootstrap
+  // has been observed returning 404 for valid .com domains, so we go direct.
+  private static RDAP_URLS = [
+    "https://rdap.verisign.com/com/v1/domain/{target}", // .com / .net
+    "https://rdap.publicinterestregistry.net/rdap/domain/{target}", // .org
+    "https://rdap.org/domain/{target}", // generic proxy, handles bootstrap
+  ];
   private static WHOIS_HOST = "https://whois.iana.org/{target}";
 
   protected async _fetch(query: { target: string }): Promise<FetchResult> {
     const target = (query.target || "").trim().toLowerCase();
-    // Try RDAP first.
-    try {
-      const r = await fetch(
-        WhoisTool.RDAP_URL.replace("{target}", target),
-        { signal: AbortSignal.timeout(this.per_request_timeout_ms) }
-      );
-      if (r.ok) {
-        const bytes = Buffer.from(await r.arrayBuffer());
-        return {
-          bytes,
-          contentType: r.headers.get("content-type") || "application/rdap+json",
-        };
+    // Try RDAP endpoints first.
+    for (const tpl of WhoisTool.RDAP_URLS) {
+      try {
+        const r = await fetch(tpl.replace("{target}", encodeURIComponent(target)), {
+          signal: AbortSignal.timeout(this.per_request_timeout_ms),
+          headers: { Accept: "application/rdap+json,application/json" },
+        });
+        if (!r.ok) continue;
+        const text = await r.text();
+        // Must look like an RDAP domain object, not an error page.
+        if (text.includes('"ldhName"') && text.includes(target.split(".")[0])) {
+          return { bytes: Buffer.from(text), contentType: "application/rdap+json" };
+        }
+      } catch {
+        continue;
       }
-    } catch {
-      // fall through to text WHOIS
     }
     const r2 = await fetch(WhoisTool.WHOIS_HOST.replace("{target}", target), {
       signal: AbortSignal.timeout(this.per_request_timeout_ms),
