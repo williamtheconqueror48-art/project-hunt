@@ -1,0 +1,28 @@
+{
+  "name": "project-hunt",
+  "version": "0.3.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "pg": "8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.11",
+    "@types/pg": "8.11.10",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.0",
+    "eslint": "8.57.1",
+    "eslint-config-next": "14.2.15",
+    "tsx": "4.19.1",
+    "typescript": "5.6.2"
+  }
+}

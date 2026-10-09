@@ -1,0 +1,17 @@
+# Local dev data — never commit DBs, caches, or secrets
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.local
+.env.*.local
+
+# Next.js
+.next/
+out/
+node_modules/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Vercel
+.vercel
