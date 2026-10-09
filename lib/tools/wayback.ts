@@ -12,16 +12,18 @@ export class WaybackTool extends ToolFunction {
   readonly emits = new Set(["url"]);
   readonly docs_url = "https://web.archive.org/cdx/";
   readonly description = "Archive.org Wayback CDX — historic URL snapshots.";
-  readonly per_request_timeout_ms = 15_000;
+  readonly per_request_timeout_ms = 25_000;
 
   private static URL = "https://web.archive.org/cdx/search/cdx";
 
   protected async _fetch(query: { target: string }): Promise<FetchResult> {
     const target = (query.target || "").trim().toLowerCase();
-    const match = target.includes(".") ? `*.${target}` : target;
     const url = new URL(WaybackTool.URL);
-    url.searchParams.set("url", match);
-    url.searchParams.set("limit", "100");
+    url.searchParams.set("url", target);
+    url.searchParams.set("matchType", "domain");
+    url.searchParams.set("collapse", "urlkey");
+    url.searchParams.set("filter", "statuscode:200");
+    url.searchParams.set("limit", "50");
     url.searchParams.set("output", "json");
     url.searchParams.set("fl", "timestamp,original,statuscode,mimetype");
     const r = await fetch(url.toString(), {

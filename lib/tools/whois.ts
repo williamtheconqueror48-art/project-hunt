@@ -9,7 +9,7 @@
 
 import { ToolFunction, type FetchResult, type Finding } from "./base";
 
-const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
+const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
 export class WhoisTool extends ToolFunction {
   readonly name = "whois";
@@ -18,7 +18,7 @@ export class WhoisTool extends ToolFunction {
   readonly description = "RDAP/WHOIS registrant + registrar + email extraction.";
   readonly per_request_timeout_ms = 10_000;
 
-  private static RDAP_URL = "https://rdap.org/domain/{target}";
+  private static RDAP_URL = "https://rdap.iana.org/domain/{target}";
   private static WHOIS_HOST = "https://whois.iana.org/{target}";
 
   protected async _fetch(query: { target: string }): Promise<FetchResult> {
@@ -55,8 +55,31 @@ export class WhoisTool extends ToolFunction {
       data = null;
     }
 
-    if (data && Array.isArray(data.entities)) {
-      for (const entity of data.entities as any[]) {
+    if (data && (Array.isArray(data.entities) || Array.isArray(data.events))) {
+      // Registration lifecycle dates (the field analysts actually want).
+      for (const ev of (data.events as any[]) || []) {
+        const action = String(ev.eventAction || "").toLowerCase();
+        if (["registration", "creation", "expiration", "last changed", "transfer"].includes(action) && ev.eventDate) {
+          findings.push({
+            source_tool: this.name,
+            entity_kind: "domain",
+            entity_value: target,
+            attributes: { date_role: action, date: String(ev.eventDate).slice(0, 10), domain: target, source: "rdap" },
+          });
+        }
+      }
+      // Nameservers.
+      for (const ns of (data.nameservers as any[]) || []) {
+        if (ns.ldhName) {
+          findings.push({
+            source_tool: this.name,
+            entity_kind: "domain",
+            entity_value: String(ns.ldhName).toLowerCase(),
+            attributes: { role: "nameserver", domain: target, source: "rdap" },
+          });
+        }
+      }
+      for (const entity of (data.entities as any[]) || []) {
         const roles: string[] = entity.roles || [];
         const vcard = entity.vcardArray || [null, []];
         let name = "";
