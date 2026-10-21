@@ -23,16 +23,38 @@ export class VirusTotalTool extends ToolFunction {
   protected async _fetch(query: { target: string }): Promise<FetchResult> {
     const key = getSettings().virustotal_api_key;
     const target = (query.target || "").trim().toLowerCase();
-    const endpoint = IPV4_RE.test(target)
+    const isIp = IPV4_RE.test(target);
+    const baseUrl = isIp
       ? `https://www.virustotal.com/api/v3/ip_addresses/${encodeURIComponent(target)}`
       : `https://www.virustotal.com/api/v3/domains/${encodeURIComponent(target)}`;
-    const r = await fetch(endpoint, {
-      headers: { "x-apikey": key || "" },
-      signal: AbortSignal.timeout(this.per_request_timeout_ms),
-    });
+    const headers = { "x-apikey": key || "" };
+    const get = async (url: string): Promise<any | null> => {
+      try {
+        const r = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(this.per_request_timeout_ms),
+        });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch {
+        return null;
+      }
+    };
+    const envelope: Record<string, any> = { base: await get(baseUrl) };
+    // Domain-only enrichment: historical resolutions + subdomains.
+    // These are the closest free substitute for a SecurityTrails feed:
+    // resolutions reveal pre-CDN origin IPs, subdomains expand the surface.
+    if (!isIp) {
+      envelope.resolutions = await get(
+        `${baseUrl}/relationships/resolutions?limit=40`
+      );
+      envelope.subdomains = await get(
+        `${baseUrl}/relationships/subdomains?limit=40`
+      );
+    }
     return {
-      bytes: Buffer.from(await r.arrayBuffer()),
-      contentType: r.headers.get("content-type") || "application/json",
+      bytes: Buffer.from(JSON.stringify(envelope)),
+      contentType: "application/json",
     };
   }
 
@@ -43,8 +65,10 @@ export class VirusTotalTool extends ToolFunction {
     } catch {
       return [];
     }
-    if (data.error) return [];
-    const attrs = (data.data && data.data.attributes) || {};
+    // Unwrap the enrichment envelope; tolerate the legacy bare-object shape.
+    const base = data && data.base !== undefined ? data.base : data;
+    if (!base || base.error) return [];
+    const attrs = (base.data && base.data.attributes) || {};
     const stats = attrs.last_analysis_stats || {};
     const findings: Finding[] = [];
     const target = (query.target || "").trim().toLowerCase();
@@ -87,6 +111,30 @@ export class VirusTotalTool extends ToolFunction {
         source_tool: this.name, entity_kind: "ipv4", entity_value: target,
         attributes: { finding: "as_owner", as_owner: attrs.as_owner, asn: attrs.asn, country: attrs.country },
       });
+    // Historical DNS resolutions: (ip, last-seen) pairs. A pre-CDN IP here
+    // is the closest free substitute for SecurityTrails history.
+    const resolutions = (data.resolutions && data.resolutions.data) || [];
+    for (const rel of resolutions) {
+      const ip = rel?.attributes?.ip_address;
+      const date = rel?.attributes?.date;
+      if (!ip) continue;
+      findings.push({
+        source_tool: this.name, entity_kind: "ipv4", entity_value: String(ip),
+        attributes: { finding: "historical_ip", domain: target, last_seen: date ?? null },
+      });
+      if (findings.length > 60) break;
+    }
+    // Known subdomains expand the attack surface.
+    const subdomains = (data.subdomains && data.subdomains.data) || [];
+    for (const sd of subdomains) {
+      const name = sd?.id || sd?.attributes?.id;
+      if (!name) continue;
+      findings.push({
+        source_tool: this.name, entity_kind: "domain", entity_value: String(name),
+        attributes: { finding: "subdomain", parent: target },
+      });
+      if (findings.length > 100) break;
+    }
     return findings;
   }
 }
